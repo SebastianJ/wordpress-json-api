@@ -12,3 +12,5 @@ RSpec.configure do |config|
     c.syntax = :expect
   end
 end
+
+raise ArgumentError, "You have to specify a URL using e.g. URL=https://some.random.url in order to run specs" if ENV.fetch('URL', nil).to_s.empty?
