@@ -3,60 +3,77 @@
 module Wordpress
   module Json
     module Api
-
       class Client
         attr_accessor :url, :configuration, :connection, :headers
   
         def initialize(url, configuration: ::Wordpress::Json::Api.configuration, options: {})
           self.configuration = configuration
           set_url(url)
+          set_headers
           set_connection
         end
 
         def set_url(url)
           self.url = url.include?("/wp-json/wp/v#{self.configuration.version}/") ? url : "#{url.gsub(/\/$/i, '')}/wp-json/wp/v#{self.configuration.version}/"
         end
+
+        def set_headers
+          self.headers                      ||=   {}
+          set_user_agent
+        end
+
+        def set_user_agent
+          user_agent                          =   self.configuration.faraday.fetch(:user_agent, nil)
+          
+          if user_agent
+            if user_agent.is_a?(String)
+              self.headers["User-Agent"]      =   user_agent
+            elsif user_agent.is_a?(Array)
+              self.headers["User-Agent"]      =   user_agent.sample
+            elsif user_agent.is_a?(Proc)
+              self.headers["User-Agent"]      =   user_agent.call
+            end
+          end
+        end
   
         def set_connection
           self.connection = ::Faraday.new(url) do |builder|
-            if configuration.faraday.fetch(:timeout, nil)
-              builder.options[:timeout]         =   configuration.faraday.fetch(:timeout, nil)
-            end
-            if configuration.faraday.fetch(:open_timeout, nil)
-              builder.options[:open_timeout]    =   configuration.faraday.fetch(:open_timeout, nil)
-            end
+            builder.options[:timeout]         =   configuration.faraday.fetch(:timeout, nil) if configuration.faraday.fetch(:timeout, nil)
+            builder.options[:open_timeout]    =   configuration.faraday.fetch(:open_timeout, nil) if configuration.faraday.fetch(:open_timeout, nil)
   
-            builder.headers = headers if headers && !headers.empty?
-  
+            builder.headers = self.headers if self.headers && !self.headers.empty?
             builder.request :json
-  
-            if configuration.verbose
-              builder.response :logger, ::Logger.new(STDOUT), bodies: true
-            end
+            builder.response :logger, ::Logger.new(STDOUT), bodies: true if configuration.verbose
             builder.response :json, content_type: /\bjson$/
-  
             builder.use ::FaradayMiddleware::FollowRedirects, limit: 3
   
             builder.adapter configuration.faraday.fetch(:adapter, ::Faraday.default_adapter)
           end
         end
   
-        def get(path, params: {})
-          request(path, params: params)&.fetch(:body, nil)
+        def get(path, params: {}, headers: {})
+          request(path, params: params, headers: headers)&.fetch(:body, nil)
         end
 
-        def request(path, params: {})
-          resp = connection.get(path) do |request|
-            if headers && !headers.empty?
-              request.headers = connection.headers.merge(headers)
+        def request(path, params: {}, headers: {}, retries: 3)
+          resp    =   nil
+
+          begin
+            resp  =   self.connection.get(path) do |request|
+              request.headers = connection.headers.merge(headers) if headers && !headers.empty?
+              request.params  = params if params && !params.empty?
             end
-            request.params = params if params && !params.empty?
+  
+            resp  =   response(resp)
+          rescue => exception
+            retries       -= 1
+            retry if retries > 0
           end
 
-          response(resp)
+          return resp
         end
 
-        def all(path, params: {})
+        def all(path, params: {}, headers: {})
           page              =   1
           params.merge!(per_page: 100)
           responses         =   []
@@ -66,17 +83,17 @@ module Wordpress
             params.merge!(page: page)
 
             begin
-              resp          =   request(path, params: params)
+              resp          =   request(path, params: params, headers: headers)
               body          =   resp&.fetch(:body, nil)
-              headers       =   resp&.fetch(:headers, {})
-              total_pages   =   headers.fetch('x-wp-totalpages', 0)&.to_i
+              resp_headers  =   resp&.fetch(:headers, {})
+              total_pages   =   resp_headers&.fetch('x-wp-totalpages', 0)&.to_i
 
-              if (body && body.is_a?(Array) && body.any?)
+              if body && body.is_a?(Array) && body.any?
                 responses   =   responses | body
                 page       +=   1
               end
 
-              continue      =   (page <= total_pages)
+              continue      =   (!total_pages.nil? && page <= total_pages)
             rescue ::Wordpress::Json::Api::Error => exception
               continue      =   false
             end
@@ -103,7 +120,6 @@ module Wordpress
         end
         
       end
-
     end
   end
 end
