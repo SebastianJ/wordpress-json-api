@@ -35,13 +35,17 @@ module Wordpress
             end
             builder.response :json, content_type: /\bjson$/
   
-            builder.use ::FaradayMiddleware::FollowRedirects, limit: 10
+            builder.use ::FaradayMiddleware::FollowRedirects, limit: 3
   
             builder.adapter configuration.faraday.fetch(:adapter, ::Faraday.default_adapter)
           end
         end
   
         def get(path, params: {})
+          request(path, params: params)&.fetch(:body, nil)
+        end
+
+        def request(path, params: {})
           resp = connection.get(path) do |request|
             if headers && !headers.empty?
               request.headers = connection.headers.merge(headers)
@@ -52,16 +56,47 @@ module Wordpress
           response(resp)
         end
 
+        def all(path, params: {})
+          page              =   1
+          params.merge!(per_page: 100)
+          responses         =   []
+          continue          =   false
+
+          begin
+            params.merge!(page: page)
+
+            begin
+              resp          =   request(path, params: params)
+              body          =   resp&.fetch(:body, nil)
+              headers       =   resp&.fetch(:headers, {})
+              total_pages   =   headers.fetch('x-wp-totalpages', 0)&.to_i
+
+              if (body && body.is_a?(Array) && body.any?)
+                responses   =   responses | body
+                page       +=   1
+              end
+
+              continue      =   (page <= total_pages)
+            rescue ::Wordpress::Json::Api::Error => exception
+              continue      =   false
+            end
+          end while continue
+
+          return responses
+        end
+
         def response(resp)
           if resp.success?
-            resp  = resp&.body
+            body  = resp&.body
   
-            error_code = (resp && resp.is_a?(Hash) && !resp.fetch('code', nil).to_s.empty?) ? resp.fetch('code', nil).to_s : nil
+            error_code = (body && body.is_a?(Hash) && !body.fetch('code', nil).to_s.empty?) ? body.fetch('code', nil).to_s : nil
             unless error_code.to_s.empty?
               raise ::Wordpress::Json::Api::Error, error_code
             end
+
+            headers = resp&.env&.response_headers
   
-            resp
+            return {body: body, headers: headers}
           else
             raise ::Wordpress::Json::Api::Error, "Failed to send request to #{self.url}"
           end

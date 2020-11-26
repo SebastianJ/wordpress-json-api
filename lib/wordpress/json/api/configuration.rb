@@ -12,8 +12,8 @@ module Wordpress
 
           self.faraday = {
             adapter: :net_http,
-            timeout: 120,
-            open_timeout: 60
+            timeout: 60,
+            open_timeout: 30
           }
   
           self.verbose = false
