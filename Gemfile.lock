@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    wordpress-json-api (0.1.1)
+    wordpress-json-api (0.1.2)
       faraday (>= 1.1.0)
       faraday_middleware (>= 1.0.0)
 
