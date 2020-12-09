@@ -56,21 +56,21 @@ module Wordpress
         end
 
         def request(path, params: {}, headers: {}, retries: 3)
-          resp    =   nil
+          response    =   nil
 
           begin
-            resp  =   self.connection.get(path) do |request|
+            resp      =   self.connection.get(path) do |request|
               request.headers = connection.headers.merge(headers) if headers && !headers.empty?
               request.params  = params if params && !params.empty?
             end
   
-            resp  =   response(resp)
+            response  =   process_response(resp)
           rescue => exception
             retries       -= 1
             retry if retries > 0
           end
 
-          return resp
+          return response
         end
 
         def all(path, params: {}, headers: {})
@@ -102,7 +102,7 @@ module Wordpress
           return responses
         end
 
-        def response(resp)
+        def process_response(resp)
           if resp.success?
             body  = resp&.body
   
